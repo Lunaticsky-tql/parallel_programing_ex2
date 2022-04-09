@@ -20,6 +20,7 @@ vector<vector<int> > query_list_container;
 double timeSvS = 0;
 double timeSvS_refine = 0;
 double timeSimplified_Adp = 0;
+double timeAdp = 0;
 
 
 int binary_search(POSTING_LIST *list, unsigned int element, int index) {
@@ -37,42 +38,12 @@ int binary_search(POSTING_LIST *list, unsigned int element, int index) {
 
 }
 
-void simplified_Adp(POSTING_LIST *queried_posting_list, int query_word_num, vector<unsigned int> &result_list) {
-    bool flag;
-    unsigned int key_element;
-    vector<int> finding_pointer(query_word_num, 0);
-    for (int k = 0; k < queried_posting_list[0].len; k++) {
-        flag = true;
-        key_element = queried_posting_list[0].arr[k];
-        for (int m = 1; m < query_word_num; ++m) {
-            //如果当前的关键元素比某一个倒排链表的最后一个元素都大，后面的元素肯定不会是倒排链表的交集，直接返回结果
-//            if (key_element>queried_posting_list[m].arr[queried_posting_list[m].len-1])
-//            {
-//                return result_list;
-//            }
-            int location = binary_search(&queried_posting_list[m], key_element, finding_pointer[m]);
-            if (location == -1) {
-                flag = false;
-                break;
-            } else {
-                finding_pointer[m] = location;
-            }
-        }
-        if (flag) {
-            result_list.push_back(key_element);
-        }
-    }
-}
-
-void SvS(POSTING_LIST *queried_posting_list, int query_word_num, vector<unsigned int> &result_list) {
-    //两表求交，求交结果再与其他表求交
-    //先对倒排链表的长度进行排序，由于查询的关键字一般只有几个，使用普通的选择排序即可
-    int *sorted_index = new int[query_word_num];
-    for (int i = 0; i < query_word_num; ++i) {
+void get_sorted_index(const POSTING_LIST *queried_posting_list, int query_word_num, int *sorted_index) {
+    for (int i = 0; i < query_word_num; i++) {
         sorted_index[i] = i;
     }
-    for (int i = 0; i < query_word_num - 1; ++i) {
-        for (int j = i + 1; j < query_word_num; ++j) {
+    for (int i = 0; i < query_word_num - 1; i++) {
+        for (int j = i + 1; j < query_word_num; j++) {
             if (queried_posting_list[sorted_index[i]].len > queried_posting_list[sorted_index[j]].len) {
                 int temp = sorted_index[i];
                 sorted_index[i] = sorted_index[j];
@@ -80,6 +51,47 @@ void SvS(POSTING_LIST *queried_posting_list, int query_word_num, vector<unsigned
             }
         }
     }
+}
+
+void simplified_Adp(POSTING_LIST *queried_posting_list, int query_word_num, vector<unsigned int> &result_list) {
+    //同样先对倒排列表按长度进行排序
+    int *sorted_index = new int[query_word_num];
+    get_sorted_index(queried_posting_list, query_word_num, sorted_index);
+    bool flag;
+    unsigned int key_element;
+    vector<int> finding_pointer(query_word_num, 0);
+
+    for (int k = 0; k < queried_posting_list[sorted_index[0]].len; k++) {
+        flag = true;
+        key_element = queried_posting_list[sorted_index[0]].arr[k];
+        for (int m = 1; m < query_word_num; ++m) {
+            //如果当前的关键元素比某一个倒排链表的最后一个元素都大，后面的元素肯定不会是倒排链表的交集，直接返回结果
+            if (key_element>queried_posting_list[m].arr[queried_posting_list[m].len-1])
+            {
+                goto end;
+
+            }
+            int location = binary_search(&queried_posting_list[sorted_index[m]], key_element, finding_pointer[sorted_index[m]]);
+            if (location == -1) {
+                flag = false;
+                break;
+            } else {
+                finding_pointer[sorted_index[m]] = location;
+            }
+        }
+        if (flag) {
+            result_list.push_back(key_element);
+        }
+    }
+    end:;
+}
+
+void SvS(POSTING_LIST *queried_posting_list, int query_word_num, vector<unsigned int> &result_list) {
+    //两表求交，求交结果再与其他表求交
+    //先对倒排链表的长度进行排序，由于查询的关键字一般只有几个，使用普通的选择排序即可
+    //同时，排序的过程也是算法的一部分，也需要计入时间
+    int *sorted_index = new int[query_word_num];
+    get_sorted_index(queried_posting_list, query_word_num, sorted_index);
     //将最短的倒排链表放在最前面
     for (int k = 0; k < queried_posting_list[sorted_index[0]].len; k++) {
         result_list.push_back(queried_posting_list[sorted_index[0]].arr[k]);
@@ -98,17 +110,19 @@ void SvS(POSTING_LIST *queried_posting_list, int query_word_num, vector<unsigned
 
 void SvS_refine(POSTING_LIST *queried_posting_list, int query_word_num, vector<unsigned int> &result_list) {
     //每次查找到元素后记录下该元素的位置，下次查找时从该位置开始查找
+    int *sorted_index = new int[query_word_num];
+    get_sorted_index(queried_posting_list, query_word_num, sorted_index);
     vector<int> finding_pointer(query_word_num, 0);
-    for (int i = 0; i < queried_posting_list[0].len; i++) {
-        result_list.push_back(queried_posting_list[0].arr[i]);
+    for (int i = 0; i < queried_posting_list[sorted_index[0]].len; i++) {
+        result_list.push_back(queried_posting_list[sorted_index[0]].arr[i]);
     }
     for (int i = 1; i < query_word_num; i++) {
         vector<unsigned int> temp_result_list;
         for (int j = 0; j < result_list.size(); j++) {
-            int location = binary_search(&queried_posting_list[i], result_list[j], finding_pointer[i]);
+            int location = binary_search(&queried_posting_list[sorted_index[i]], result_list[j], finding_pointer[i]);
             if (location != -1) {
                 temp_result_list.push_back(result_list[j]);
-                finding_pointer[i] = location;
+                finding_pointer[sorted_index[i]] = location;
             }
         }
         result_list = temp_result_list;
@@ -118,7 +132,7 @@ void SvS_refine(POSTING_LIST *queried_posting_list, int query_word_num, vector<u
 
 void serial_algorithms(int QueryNum, vector<vector<unsigned int>> &SvS_result_container,
                        vector<vector<unsigned int>> &SvS_refine_result_container,
-                       vector<vector<unsigned int>> &simplified_Adp_result_container) {
+                       vector<vector<unsigned int>> &simplified_Adp_result_container,vector<vector<unsigned int>> &Adp_result_container) {
 
     for (int i = 0; i < QueryNum; ++i) {
         int query_word_num = query_list_container[i].size();
@@ -243,7 +257,8 @@ int main() {
         vector<vector<unsigned int>> SvS_result;
         vector<vector<unsigned int>> SvS_refine_result;
         vector<vector<unsigned int>> simplified_Adp_result;
-        serial_algorithms(QueryNum, SvS_result, SvS_refine_result, simplified_Adp_result);
+        vector<vector<unsigned int>> Adp_result;
+        serial_algorithms(QueryNum, SvS_result, SvS_refine_result, simplified_Adp_result, Adp_result);
 
         //测试simplified_Adp算法正确性
         for (int j = 0; j < QueryNum; ++j) {
