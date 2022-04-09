@@ -38,6 +38,21 @@ int binary_search(POSTING_LIST *list, unsigned int element, int index) {
 
 }
 
+int binary_search_with_position(POSTING_LIST *list, unsigned int element, int index) {
+    //如果找到返回该元素位置，否则返回不小于它的第一个元素的位置
+    int low = index, high = list->len - 1, mid;
+    while (low <= high) {
+        mid = (low + high) / 2;
+        if (list->arr[mid] == element)
+            return mid;
+        else if (list->arr[mid] < element)
+            low = mid + 1;
+        else
+            high = mid - 1;
+    }
+    return low;
+}
+
 void get_sorted_index(const POSTING_LIST *queried_posting_list, int query_word_num, int *sorted_index) {
     for (int i = 0; i < query_word_num; i++) {
         sorted_index[i] = i;
@@ -54,6 +69,7 @@ void get_sorted_index(const POSTING_LIST *queried_posting_list, int query_word_n
 }
 
 void simplified_Adp(POSTING_LIST *queried_posting_list, int query_word_num, vector<unsigned int> &result_list) {
+    //不对列表长度进行动态更新的Adp算法
     //同样先对倒排列表按长度进行排序
     int *sorted_index = new int[query_word_num];
     get_sorted_index(queried_posting_list, query_word_num, sorted_index);
@@ -61,23 +77,24 @@ void simplified_Adp(POSTING_LIST *queried_posting_list, int query_word_num, vect
     unsigned int key_element;
     vector<int> finding_pointer(query_word_num, 0);
 
+    //每次从最短的倒排索引表中选元素
     for (int k = 0; k < queried_posting_list[sorted_index[0]].len; k++) {
         flag = true;
         key_element = queried_posting_list[sorted_index[0]].arr[k];
         for (int m = 1; m < query_word_num; ++m) {
+            int mth_short=sorted_index[m];
+            POSTING_LIST searching_list=queried_posting_list[mth_short];
             //如果当前的关键元素比某一个倒排链表的最后一个元素都大，后面的元素肯定不会是倒排链表的交集，直接返回结果
-            if (key_element>queried_posting_list[m].arr[queried_posting_list[m].len-1])
+            if (key_element>searching_list.arr[searching_list.len-1])
             {
                 goto end;
-
             }
-            int location = binary_search(&queried_posting_list[sorted_index[m]], key_element, finding_pointer[sorted_index[m]]);
-            if (location == -1) {
+            int location = binary_search_with_position(&queried_posting_list[mth_short], key_element, finding_pointer[sorted_index[m]]);
+            if (searching_list.arr[location] != key_element) {
                 flag = false;
                 break;
-            } else {
-                finding_pointer[sorted_index[m]] = location;
             }
+                finding_pointer[mth_short] = location;
         }
         if (flag) {
             result_list.push_back(key_element);
@@ -98,6 +115,7 @@ void SvS(POSTING_LIST *queried_posting_list, int query_word_num, vector<unsigned
     }
     for (int i = 1; i < query_word_num; i++) {
         vector<unsigned int> temp_result_list;
+
         for (int j = 0; j < result_list.size(); j++) {
             if (binary_search(&queried_posting_list[sorted_index[i]], result_list[j], 0) != -1) {
                 temp_result_list.push_back(result_list[j]);
@@ -119,20 +137,27 @@ void SvS_refine(POSTING_LIST *queried_posting_list, int query_word_num, vector<u
     for (int i = 1; i < query_word_num; i++) {
         vector<unsigned int> temp_result_list;
         for (int j = 0; j < result_list.size(); j++) {
-            int location = binary_search(&queried_posting_list[sorted_index[i]], result_list[j], finding_pointer[i]);
-            if (location != -1) {
+            int location = binary_search_with_position(&queried_posting_list[sorted_index[i]], result_list[j], finding_pointer[i]);
+            if (queried_posting_list[sorted_index[i]].arr[location]== result_list[j]) {
                 temp_result_list.push_back(result_list[j]);
-                finding_pointer[sorted_index[i]] = location;
             }
+            finding_pointer[sorted_index[i]] = location;
         }
+
         result_list = temp_result_list;
     }
 
 }
 
+void Adp(POSTING_LIST *queried_posting_list, int queried_word_num, vector<unsigned int> &Adp_result_list_container) {
+    //每次搜索的过程中发现了不匹配，都按照每一个表内剩余元素的个数重新排序
+
+
+}
+
 void serial_algorithms(int QueryNum, vector<vector<unsigned int>> &SvS_result_container,
                        vector<vector<unsigned int>> &SvS_refine_result_container,
-                       vector<vector<unsigned int>> &simplified_Adp_result_container,vector<vector<unsigned int>> &Adp_result_container) {
+                       vector<vector<unsigned int>> &simplified_Adp_result_container, vector<vector<unsigned int>> &Adp_result_container) {
 
     for (int i = 0; i < QueryNum; ++i) {
         int query_word_num = query_list_container[i].size();
@@ -146,12 +171,18 @@ void serial_algorithms(int QueryNum, vector<vector<unsigned int>> &SvS_result_co
         vector<unsigned int> simplified_Adp_result_list;
         vector<unsigned int> SvS_result_list;
         vector<unsigned int> SvS_refine_result_list;
+        vector<unsigned int> Adp_result_list;
+
         timeval tv_begin, tv_end;
         //简化Adp算法计时
         gettimeofday(&tv_begin, NULL);
         simplified_Adp(queried_posting_list, query_word_num, simplified_Adp_result_list);
         gettimeofday(&tv_end, NULL);
         timeSimplified_Adp += (tv_end.tv_sec - tv_begin.tv_sec) * 1000.0 + (tv_end.tv_usec - tv_begin.tv_usec) / 1000.0;
+        //Adp算法计时
+        gettimeofday(&tv_begin, NULL);
+        Adp(queried_posting_list, query_word_num, Adp_result_list);
+        gettimeofday(&tv_end, NULL);
         //SvS算法计时
         gettimeofday(&tv_begin, NULL);
         SvS(queried_posting_list, query_word_num, SvS_result_list);
@@ -165,9 +196,11 @@ void serial_algorithms(int QueryNum, vector<vector<unsigned int>> &SvS_result_co
         simplified_Adp_result_container.push_back(simplified_Adp_result_list);
         SvS_result_container.push_back(SvS_result_list);
         SvS_refine_result_container.push_back(SvS_refine_result_list);
+        Adp_result_container.push_back(Adp_result_list);
         simplified_Adp_result_list.clear();
         SvS_result_list.clear();
         SvS_refine_result_list.clear();
+        Adp_result_list.clear();
         delete[] queried_posting_list;
     }
 }
