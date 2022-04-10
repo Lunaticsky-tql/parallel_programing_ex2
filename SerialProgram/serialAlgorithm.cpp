@@ -3,8 +3,6 @@
 #include<sys/time.h>
 #include<iostream>
 #include <cstdlib>
-#include <time.h>
-#include <unistd.h>
 
 using namespace std;
 FILE *fi;
@@ -17,7 +15,7 @@ struct POSTING_LIST {
 const int POSTING_LIST_NUM = 1756;
 unsigned int array_len;
 unsigned int *temp_arr;
-int posting_list_counter, n, query_list_count;
+int posting_list_counter, query_list_count;
 vector<vector<int> > query_list_container;
 double timeSvS = 0;
 double timeSvS_refine = 0;
@@ -388,7 +386,6 @@ int main() {
 ////            }
 ////            printf("\n");
 //        }
-
         printf("SvS time:            %f ms\n", timeSvS);
         printf("SvS_refine time:     %f ms\n", timeSvS_refine);
         printf("simplified_Adp time: %f ms\n", timeSimplified_Adp);
