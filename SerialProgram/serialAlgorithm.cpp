@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include<vector>
 #include<sys/time.h>
+#include<time.h>
 #include<iostream>
 #include <cstdlib>
 
@@ -22,6 +23,8 @@ double timeSvS_refine = 0;
 double timeSimplified_Adp = 0;
 double timeAdp = 0;
 timeval tv_begin, tv_end;
+struct timespec sts,ets;
+long long time_use;
 
 
 int binary_search(POSTING_LIST *list, unsigned int element, int index) {
@@ -235,17 +238,32 @@ void serial_algorithms(int QueryNum, vector<vector<unsigned int>> &SvS_result_co
         gettimeofday(&tv_begin, NULL);
         simplified_Adp(queried_posting_list, query_word_num, simplified_Adp_result_list);
         gettimeofday(&tv_end, NULL);
+
+        //简化Adp算法，高精度计时
+        timespec_get(&sts, TIME_UTC);
+        simplified_Adp(queried_posting_list, query_word_num, simplified_Adp_result_list);
+        timespec_get(&ets, TIME_UTC);
+        time_t dsec=ets.tv_sec-sts.tv_sec;
+        long dnsec=ets.tv_nsec - sts.tv_nsec;
+        if (dnsec<0){
+            dsec--;
+            dnsec+=1000000000ll;
+        }
+        time_use+= 1000000000 * (dsec) + dnsec;
         timeSimplified_Adp += (tv_end.tv_sec - tv_begin.tv_sec) * 1000.0 + (tv_end.tv_usec - tv_begin.tv_usec) / 1000.0;
+
         //Adp算法计时
         gettimeofday(&tv_begin, NULL);
         Adp(queried_posting_list, query_word_num, Adp_result_list);
         gettimeofday(&tv_end, NULL);
         timeAdp+=(tv_end.tv_sec - tv_begin.tv_sec) * 1000.0 + (tv_end.tv_usec - tv_begin.tv_usec) / 1000.0;
+
         //SvS算法计时
         gettimeofday(&tv_begin, NULL);
         SvS(queried_posting_list, query_word_num, SvS_result_list);
         gettimeofday(&tv_end, NULL);
         timeSvS += (tv_end.tv_sec - tv_begin.tv_sec) * 1000.0 + (tv_end.tv_usec - tv_begin.tv_usec) / 1000.0;
+
         //改进SvS算法计时
         gettimeofday(&tv_begin, NULL);
         SvS_refine(queried_posting_list, query_word_num, SvS_refine_result_list);
@@ -300,6 +318,7 @@ int read_posting_list() {
         for (int i = 0; i < array_len; i++) {
             fread(&temp_arr[i], sizeof(unsigned int), 1, fi);
             if (feof(fi)) break;
+
         }
         if (feof(fi)) break;
         POSTING_LIST tmp;
@@ -390,6 +409,7 @@ int main() {
         printf("SvS_refine time:     %f ms\n", timeSvS_refine);
         printf("simplified_Adp time: %f ms\n", timeSimplified_Adp);
         printf("Adp time:            %f ms\n", timeAdp);
+        printf("simplified_Adp time: %lld ns (high precise)\n",time_use);
         free(posting_list_container);
         return 0;
     }
