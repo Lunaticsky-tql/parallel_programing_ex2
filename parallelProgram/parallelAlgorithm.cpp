@@ -12,13 +12,18 @@ struct POSTING_LIST {
     unsigned int *arr;
 } *posting_list_container;
 double time_serial_bitmap;
+double time_SIMD_bitmap;
+double time_unrooled_bitmap;
 timeval tv_begin, tv_end;
 
 
 const int POSTING_LIST_NUM = 1756;
 unsigned int array_len;
 unsigned int *temp_arr;
-const unsigned int MAX_DOC_ID=25205174;
+//25205174+1
+const unsigned int MAX_DOC_ID=25205175;
+const int NEON_BLOCK_BIT = 128;
+const unsigned int EXPANDED_BITMAP_SIZE= MAX_DOC_ID + 16*NEON_BLOCK_BIT;
 vector<vector<int> > query_list_container;
 int posting_list_counter, query_list_count;
 
@@ -133,13 +138,80 @@ void SIMD_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query_word_nu
             max_possible_common_DocId = queried_posting_list[i].arr[queried_posting_list[i].len - 1];
         }
     }
+    printf("max_possible_common_DocId: %d\n", max_possible_common_DocId);
     //convert the posting list to bitset
+    bitset<EXPANDED_BITMAP_SIZE> *SIMD_bitmap = new bitset<EXPANDED_BITMAP_SIZE>[query_word_num];
+    for (int i = 0; i < query_word_num; ++i) {
+        for (int j = 0; j < queried_posting_list[i].len; ++j) {
+            SIMD_bitmap[i].set(queried_posting_list[i].arr[j]);
+        }
+    }
+    //get the intersection of the bitset by & to the first bitset
+    gettimeofday(&tv_begin, NULL);
+    //use NEON intrinsics to & the bitset
 
+    //the pointer address must be stored in a long type,otherwise it will lose information! and it is address, not the pointer!
+    //I checked this error for almost two hours...
+    long SIMD_referring_bitmap_ptr = (long) &SIMD_bitmap[0];
+    for (int i = 1; i < query_word_num; ++i) {
+      long SIMD_bitmap_ptr = (long) &SIMD_bitmap[i];
+      for(int j=0;j<(((max_possible_common_DocId)/128)+1);j++){
+          unsigned int *SIMD_referring_bitmap_ptr_temp =(unsigned int *)(SIMD_referring_bitmap_ptr+16*j);
+          unsigned int *SIMD_bitmap_ptr_temp = (unsigned int *)(SIMD_bitmap_ptr+16*j);
+          uint32x4_t SIMD_referring_bitmap_temp = vld1q_u32(SIMD_referring_bitmap_ptr_temp);
+          uint32x4_t SIMD_bitmap_temp = vld1q_u32(SIMD_bitmap_ptr_temp);
+          SIMD_referring_bitmap_temp = vandq_u32(SIMD_referring_bitmap_temp,SIMD_bitmap_temp);
+          vst1q_u32(SIMD_referring_bitmap_ptr_temp,SIMD_referring_bitmap_temp);
+      }
+      }
+    //convert the bitset to vector
+    for (int i = 0; i <= max_possible_common_DocId; ++i) {
+        if (SIMD_bitmap[0].test(i)) {
+            SIMD_bitmap_result.push_back(i);
+        }
+    }
+    gettimeofday(&tv_end, NULL);
+    time_SIMD_bitmap+= (tv_end.tv_sec - tv_begin.tv_sec) * 1000 + (tv_end.tv_usec - tv_begin.tv_usec) / 1000.0;
+    delete []SIMD_bitmap;
+    }
+
+void unrooled_bitmap_algorithm(POSTING_LIST* queried_posting_list, int query_word_num, vector<unsigned int> &unrooled_bitmap_result) {
+    unsigned int max_possible_common_DocId = queried_posting_list[0].arr[queried_posting_list[0].len - 1];
+    for (int i = 1; i < query_word_num; i++) {
+        if (max_possible_common_DocId > queried_posting_list[i].arr[queried_posting_list[i].len - 1]) {
+            max_possible_common_DocId = queried_posting_list[i].arr[queried_posting_list[i].len - 1];
+        }
+    }
+    //convert the posting list to bitset
+    bitset<EXPANDED_BITMAP_SIZE> *serial_bitmap = new bitset<EXPANDED_BITMAP_SIZE>[query_word_num];
+    for (int i = 0; i < query_word_num; ++i) {
+        for (int j = 0; j < queried_posting_list[i].len; ++j) {
+            serial_bitmap[i].set(queried_posting_list[i].arr[j]);
+        }
+    }
+    //get the intersection of the bitset by & to the first bitset
+    gettimeofday(&tv_begin, NULL);
+    for (int i = 1; i < query_word_num; ++i) {
+        for (int j = 0; j <=max_possible_common_DocId; j+=4) {
+            serial_bitmap[0].set(j, serial_bitmap[0].test(j) & serial_bitmap[i].test(j));
+            serial_bitmap[0].set(j+1, serial_bitmap[0].test(j+1) & serial_bitmap[i].test(j+1));
+            serial_bitmap[0].set(j+2, serial_bitmap[0].test(j+2) & serial_bitmap[i].test(j+2));
+            serial_bitmap[0].set(j+3, serial_bitmap[0].test(j+3) & serial_bitmap[i].test(j+3));
+        }
+    }
+    //convert the bitset to vector
+    for (int i = 0; i <= max_possible_common_DocId; ++i) {
+        if (serial_bitmap[0].test(i)) {
+            unrooled_bitmap_result.push_back(i);
+        }
+    }
+    gettimeofday(&tv_end, NULL);
+    time_unrooled_bitmap+= (tv_end.tv_sec - tv_begin.tv_sec) * 1000 + (tv_end.tv_usec - tv_begin.tv_usec) / 1000.0;
 
 
 }
 
-void parallel_algorithm(int QueryNum, vector<vector<unsigned int>> &serial_bitmap_result_container, vector<vector<unsigned int>> &SIMD_bitmap_result_container) {
+void parallel_algorithm(int QueryNum, vector<vector<unsigned int>> &serial_bitmap_result_container, vector<vector<unsigned int>> &SIMD_bitmap_result_container, vector<vector<unsigned int>> &unrooled_bitmap_result_container) {
 
     for (int i = 0; i < QueryNum; ++i) {
         int query_word_num = query_list_container[i].size();
@@ -151,11 +223,18 @@ void parallel_algorithm(int QueryNum, vector<vector<unsigned int>> &serial_bitma
         }
         vector<unsigned int> serial_bitmap_result;
         vector<unsigned int> SIMD_bitmap_result;
+        vector<unsigned int> unrooled_bitmap_result;
 
         serial_bitmap_algorithm(queried_posting_list, query_word_num, serial_bitmap_result);
-//        SIMD_bitmap_algorithm(queried_posting_list, query_word_num, SIMD_bitmap_result);
+        unrooled_bitmap_algorithm(queried_posting_list, query_word_num, unrooled_bitmap_result);
+        SIMD_bitmap_algorithm(queried_posting_list, query_word_num, SIMD_bitmap_result);
 
         serial_bitmap_result_container.push_back(serial_bitmap_result);
+        SIMD_bitmap_result_container.push_back(SIMD_bitmap_result);
+        unrooled_bitmap_result_container.push_back(unrooled_bitmap_result);
+        serial_bitmap_result.clear();
+        SIMD_bitmap_result.clear();
+        unrooled_bitmap_result.clear();
 
     }
 }
@@ -170,7 +249,8 @@ int main()
         int QueryNum = 5;
         vector<vector<unsigned int>> serial_bitmap_result;
         vector<vector<unsigned int>> SIMD_bitmap_result;
-        parallel_algorithm(QueryNum, serial_bitmap_result, SIMD_bitmap_result);
+        vector<vector<unsigned int>> unrooled_bitmap_result;
+        parallel_algorithm(QueryNum, serial_bitmap_result, SIMD_bitmap_result, unrooled_bitmap_result);
         //test the correctness of the serial_bitmap_result
         for(int i=0;i<QueryNum;++i){
             printf("result %d: ", i);
@@ -180,7 +260,27 @@ int main()
             }
             printf("\n");
         }
+        //test the correctness of the SIMD_bitmap_result
+        for(int i=0;i<QueryNum;++i){
+            printf("result %d: ", i);
+            printf("%d\n", SIMD_bitmap_result[i].size());
+            for(int j=0;j<SIMD_bitmap_result[i].size();++j){
+                printf("%d ", SIMD_bitmap_result[i][j]);
+            }
+            printf("\n");
+        }
+        //test the correctness of the unrooled_bitmap_result
+        for(int i=0;i<QueryNum;++i){
+            printf("result %d: ", i);
+            printf("%d\n", unrooled_bitmap_result[i].size());
+            for(int j=0;j<unrooled_bitmap_result[i].size();++j){
+                printf("%d ", unrooled_bitmap_result[i][j]);
+            }
+            printf("\n");
+        }
         printf("time_serial_bitmap: %f\n", time_serial_bitmap);
+        printf("time_SIMD_bitmap: %f\n", time_SIMD_bitmap);
+        printf("time_unrooled_bitmap: %f\n", time_unrooled_bitmap);
         return 0;
     }
 
