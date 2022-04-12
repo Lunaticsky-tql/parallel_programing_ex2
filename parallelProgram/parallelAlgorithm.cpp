@@ -113,7 +113,6 @@ unsigned int get_max_possible_common_DocId(POSTING_LIST *queried_posting_list, i
 
 void serial_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query_word_num,
                              vector<unsigned int> &serial_bitmap_result) {
-    //use bitset to store the posting list
     //get the min max_DocID of the posting list as max possible docID the result intersection can be
     unsigned int max_possible_common_DocId = get_max_possible_common_DocId(queried_posting_list, query_word_num);
     //convert the posting list to bitset
@@ -144,12 +143,7 @@ void SIMD_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query_word_nu
                            vector<unsigned int> &SIMD_bitmap_result) {
     //use NEON intrinsics to accelerate the bitmap algorithm
     //get the min max_DocID of the posting list as max possible docID the result intersection can be
-    unsigned int max_possible_common_DocId = queried_posting_list[0].arr[queried_posting_list[0].len - 1];
-    for (int i = 1; i < query_word_num; i++) {
-        if (max_possible_common_DocId > queried_posting_list[i].arr[queried_posting_list[i].len - 1]) {
-            max_possible_common_DocId = queried_posting_list[i].arr[queried_posting_list[i].len - 1];
-        }
-    }
+    unsigned int max_possible_common_DocId = get_max_possible_common_DocId(queried_posting_list, query_word_num);
     //convert the posting list to bitset
     bitset<EXPANDED_BITMAP_SIZE> *SIMD_bitmap = new bitset<EXPANDED_BITMAP_SIZE>[query_word_num];
     for (int i = 0; i < query_word_num; ++i) {
@@ -158,7 +152,7 @@ void SIMD_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query_word_nu
         }
     }
     //get the intersection of the bitset by & to the first bitset
-    gettimeofday(&tv_begin, NULL);
+    gettimeofday(&tv_begin, nullptr);
     //use NEON intrinsics to & the bitset
     //the pointer address must be stored in a long type,otherwise it will lose information! and it is address, not the pointer!
     //I checked this error for almost two hours...
@@ -180,19 +174,14 @@ void SIMD_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query_word_nu
             SIMD_bitmap_result.push_back(i);
         }
     }
-    gettimeofday(&tv_end, NULL);
+    gettimeofday(&tv_end, nullptr);
     time_SIMD_bitmap += (tv_end.tv_sec - tv_begin.tv_sec) * 1000 + (tv_end.tv_usec - tv_begin.tv_usec) / 1000.0;
     delete[]SIMD_bitmap;
 }
 
 void unrooled_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query_word_num,
                                vector<unsigned int> &unrooled_bitmap_result) {
-    unsigned int max_possible_common_DocId = queried_posting_list[0].arr[queried_posting_list[0].len - 1];
-    for (int i = 1; i < query_word_num; i++) {
-        if (max_possible_common_DocId > queried_posting_list[i].arr[queried_posting_list[i].len - 1]) {
-            max_possible_common_DocId = queried_posting_list[i].arr[queried_posting_list[i].len - 1];
-        }
-    }
+    unsigned int max_possible_common_DocId = get_max_possible_common_DocId(queried_posting_list, query_word_num);
     //convert the posting list to bitset
     bitset<EXPANDED_BITMAP_SIZE> *unrolled_bitmap = new bitset<EXPANDED_BITMAP_SIZE>[query_word_num];
     for (int i = 0; i < query_word_num; ++i) {
@@ -201,7 +190,7 @@ void unrooled_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query_wor
         }
     }
     //get the intersection of the bitset by & to the first bitset
-    gettimeofday(&tv_begin, NULL);
+    gettimeofday(&tv_begin, nullptr);
     for (int i = 1; i < query_word_num; ++i) {
         for (int j = 0; j <= max_possible_common_DocId; j += 4) {
             unrolled_bitmap[0].set(j, unrolled_bitmap[0].test(j) & unrolled_bitmap[i].test(j));
@@ -234,19 +223,28 @@ void blocked_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query_word
     }
     bitset<EXPANDED_BITMAP_SIZE> *block_bitmap = new bitset<EXPANDED_BITMAP_SIZE>[query_word_num];
     bool **block_bitmap_flag = new bool *[query_word_num];
+
     for (int i = 0; i < query_word_num; ++i) {
         block_bitmap_flag[i] = new bool[(max_possible_common_DocId / BLOCK_SIZE) + 1];
         for (int j = 0; j < (max_possible_common_DocId / BLOCK_SIZE) + 1; ++j) {
             block_bitmap_flag[i][j] = false;
         }
     }
+
     //convert the posting list to bitset
     for (int i = 0; i < query_word_num; ++i) {
         for (int j = 0; j < queried_posting_list[i].len; ++j) {
-            block_bitmap[i].set(queried_posting_list[i].arr[j]);
-            block_bitmap_flag[i][queried_posting_list[i].arr[j] / BLOCK_SIZE] = true;
+            if(queried_posting_list[i].arr[j] <=max_possible_common_DocId) {
+                block_bitmap[i].set(queried_posting_list[i].arr[j]);
+                block_bitmap_flag[i][queried_posting_list[i].arr[j] / BLOCK_SIZE] = true;
+            } else {
+                //the element is impossible to be the intersection of the blocks,so it is useless
+                //and more importantly it will cause the overflow of the bitmap block flag !!!!
+                break;
+            }
         }
     }
+
     //get the intersection of the bitset by & to the first bitset
     gettimeofday(&tv_begin, nullptr);
     //start with the & of the boolean array,only if the two blocks are not all 0, then the & is needed
@@ -266,6 +264,7 @@ void blocked_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query_word
             }
         }
     }
+
     //convert the bitset to vector
     //it is possible to have the intersection element only if the block flag inn the first bitset is true
     //start with detecting the block flag
@@ -302,12 +301,16 @@ void SIMD_blocked_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query
             }
         }
         //convert the posting list to bitset
-        for (int i = 0; i < query_word_num; ++i) {
-            for (int j = 0; j < queried_posting_list[i].len; ++j) {
+    for (int i = 0; i < query_word_num; ++i) {
+        for (int j = 0; j < queried_posting_list[i].len; ++j) {
+            if(queried_posting_list[i].arr[j] <=max_possible_common_DocId) {
                 SIMD_block_bitmap[i].set(queried_posting_list[i].arr[j]);
                 SIMD_block_bitmap_flag[i][queried_posting_list[i].arr[j] / BLOCK_SIZE] = true;
+            } else {
+                break;
             }
         }
+    }
         //get the intersection of the bitset by & to the first bitset
         gettimeofday(&tv_begin, nullptr);
         long block_referring_bitmap_ptr = (long) &SIMD_block_bitmap[0];
@@ -358,9 +361,6 @@ void SIMD_blocked_bitmap_algorithm(POSTING_LIST *queried_posting_list, int query
         }
         delete[]SIMD_block_bitmap_flag;
 
-
-
-
 }
 
 void parallel_algorithm(int QueryNum, vector<vector<unsigned int>> &serial_result_container,
@@ -383,11 +383,11 @@ void parallel_algorithm(int QueryNum, vector<vector<unsigned int>> &serial_resul
         vector<unsigned int> blocked_bitmap_result;
         vector<unsigned int> SIMD_blocked_bitmap_result;
 
-//     serial_bitmap_algorithm(queried_posting_list, query_word_num, serial_bitmap_result);
-//        unrooled_bitmap_algorithm(queried_posting_list, query_word_num, unrooled_bitmap_result);
-//        SIMD_bitmap_algorithm(queried_posting_list, query_word_num, SIMD_bitmap_result);
+     serial_bitmap_algorithm(queried_posting_list, query_word_num, serial_bitmap_result);
+        unrooled_bitmap_algorithm(queried_posting_list, query_word_num, unrooled_bitmap_result);
+        SIMD_bitmap_algorithm(queried_posting_list, query_word_num, SIMD_bitmap_result);
       blocked_bitmap_algorithm(queried_posting_list, query_word_num, blocked_bitmap_result);
-//        SIMD_blocked_bitmap_algorithm(queried_posting_list, query_word_num, SIMD_blocked_bitmap_result);
+     SIMD_blocked_bitmap_algorithm(queried_posting_list, query_word_num, SIMD_blocked_bitmap_result);
 
         serial_result_container.push_back(serial_bitmap_result);
         SIMD_result_container.push_back(SIMD_bitmap_result);
@@ -417,6 +417,7 @@ int main() {
         vector<vector<unsigned int>> unrooled_result;
         vector<vector<unsigned int>> blocked_result;
         vector<vector<unsigned int>> SIMD_blocked_result;
+
         parallel_algorithm(QueryNum, serial_result, SIMD_result, unrooled_result, blocked_result, SIMD_blocked_result);
         //test the correctness of the serial_result
         for (int i = 0; i < QueryNum; ++i) {
@@ -427,33 +428,33 @@ int main() {
             }
             printf("\n");
         }
-//        //test the correctness of the SIMD_result
-//        for (int i = 0; i < QueryNum; ++i) {
-//            printf("result %d: ", i);
-//            printf("%zu\n", SIMD_result[i].size());
-//            for (unsigned int j: SIMD_result[i]) {
-//                printf("%d ", j);
-//            }
-//            printf("\n");
-//        }
-//        //test the correctness of the unrooled_result
-//        for (int i = 0; i < QueryNum; ++i) {
-//            printf("result %d: ", i);
-//            printf("%zu\n", unrooled_result[i].size());
-//            for (unsigned int j: unrooled_result[i]) {
-//                printf("%d ", j);
-//            }
-//            printf("\n");
-//        }
-//        //test the correctness of the blocked_result
-//        for (int i = 0; i < QueryNum; ++i) {
-//            printf("result %d: ", i);
-//            printf("%zu\n", blocked_result[i].size());
-//            for (unsigned int j: blocked_result[i]) {
-//                printf("%d ", j);
-//            }
-//            printf("\n");
-//        }
+        //test the correctness of the SIMD_result
+        for (int i = 0; i < QueryNum; ++i) {
+            printf("result %d: ", i);
+            printf("%zu\n", SIMD_result[i].size());
+            for (unsigned int j: SIMD_result[i]) {
+                printf("%d ", j);
+            }
+            printf("\n");
+        }
+        //test the correctness of the unrooled_result
+        for (int i = 0; i < QueryNum; ++i) {
+            printf("result %d: ", i);
+            printf("%zu\n", unrooled_result[i].size());
+            for (unsigned int j: unrooled_result[i]) {
+                printf("%d ", j);
+            }
+            printf("\n");
+        }
+        //test the correctness of the blocked_result
+        for (int i = 0; i < QueryNum; ++i) {
+            printf("result %d: ", i);
+            printf("%zu\n", blocked_result[i].size());
+            for (unsigned int j: blocked_result[i]) {
+                printf("%d ", j);
+            }
+            printf("\n");
+        }
         //test the correctness of the SIMD_blocked_result
         for (int i = 0; i < QueryNum; ++i) {
             printf("result %d: ", i);
